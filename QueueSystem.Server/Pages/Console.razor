@@ -1,0 +1,193 @@
+@page "/console"
+@using QueueSystem.Shared.Models
+@inject QueueService QueueService
+@inject NavigationManager NavigationManager
+
+<PageTitle>Counter Console</PageTitle>
+
+<div class="console-container">
+    <div class="counter-info">
+        <h2>Counter Control Panel</h2>
+        <div class="form-group">
+            <label for="counterSelect">Select Counter:</label>
+            <select id="counterSelect" class="form-control" @bind="_selectedCounterNumber">
+                @foreach (var counter in QueueService.GetCounters())
+                {
+                    <option value="@counter.Number">Counter @counter.Number</option>
+                }
+            </select>
+        </div>
+
+        @if (_selectedCounter != null)
+        {
+            <div class="counter-status">
+                <h3>Current Status</h3>
+                <p>Status: @_selectedCounter.Status</p>
+                <p>Current Ticket: @(_selectedCounter.CurrentTicketNumber ?? "None")</p>
+            </div>
+
+            <div class="counter-actions">
+                <button class="btn btn-primary" @onclick="CallNextTicket" disabled="@(_selectedCounter.Status != CounterStatus.Available)">
+                    Call Next
+                </button>
+                <button class="btn btn-success" @onclick="CompleteService" disabled="@(_selectedCounter.Status != CounterStatus.Serving)">
+                    Complete Service
+                </button>
+            </div>
+        }
+    </div>
+
+    <div class="queue-status">
+        <h2>Queue Status</h2>
+        <div class="service-types">
+            @foreach (var serviceType in QueueService.GetServiceTypes())
+            {
+                <div class="service-type-card">
+                    <h4>@serviceType.Name</h4>
+                    <p>Waiting: @(_waitingCounts.GetValueOrDefault(serviceType.Id, 0))</p>
+                    <button class="btn btn-secondary" @onclick="() => CreateTicket(serviceType.Id)">
+                        Create Test Ticket
+                    </button>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private int _selectedCounterNumber;
+    private Counter? _selectedCounter;
+    private Dictionary<string, int> _waitingCounts = new();
+
+    protected override void OnInitialized()
+    {
+        var counters = QueueService.GetCounters();
+        if (counters.Any())
+        {
+            _selectedCounterNumber = counters.First().Number;
+            UpdateSelectedCounter();
+        }
+
+        UpdateWaitingCounts();
+    }
+
+    private void UpdateSelectedCounter()
+    {
+        _selectedCounter = QueueService.GetCounters()
+            .FirstOrDefault(c => c.Number == _selectedCounterNumber);
+    }
+
+    private void UpdateWaitingCounts()
+    {
+        var tickets = QueueService.GetActiveTickets();
+        _waitingCounts = tickets
+            .Where(t => t.Status == TicketStatus.Waiting)
+            .GroupBy(t => t.ServiceType)
+            .ToDictionary(g => g.Key, g => g.Count());
+    }
+
+    private async Task CallNextTicket()
+    {
+        if (_selectedCounter?.Status == CounterStatus.Available)
+        {
+            await QueueService.CallNextTicketAsync(_selectedCounterNumber);
+            UpdateSelectedCounter();
+            UpdateWaitingCounts();
+        }
+    }
+
+    private async Task CompleteService()
+    {
+        if (_selectedCounter?.Status == CounterStatus.Serving)
+        {
+            await QueueService.CompleteServiceAsync(_selectedCounter.CurrentTicketNumber);
+            UpdateSelectedCounter();
+            UpdateWaitingCounts();
+        }
+    }
+
+    private async Task CreateTicket(string serviceType)
+    {
+        await QueueService.CreateTicketAsync(serviceType);
+        UpdateWaitingCounts();
+    }
+}
+
+<style>
+    .console-container {
+        padding: 2rem;
+        max-width: 1200px;
+        margin: 0 auto;
+    }
+
+    .counter-info {
+        background-color: #f8f9fa;
+        padding: 1.5rem;
+        border-radius: 8px;
+        margin-bottom: 2rem;
+    }
+
+    .form-group {
+        margin-bottom: 1rem;
+    }
+
+    .counter-status {
+        margin: 1.5rem 0;
+        padding: 1rem;
+        background-color: #e9ecef;
+        border-radius: 4px;
+    }
+
+    .counter-actions {
+        display: flex;
+        gap: 1rem;
+    }
+
+    .queue-status {
+        background-color: #f8f9fa;
+        padding: 1.5rem;
+        border-radius: 8px;
+    }
+
+    .service-types {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+        gap: 1rem;
+        margin-top: 1rem;
+    }
+
+    .service-type-card {
+        background-color: white;
+        padding: 1rem;
+        border-radius: 4px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .btn {
+        padding: 0.5rem 1rem;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-weight: bold;
+    }
+
+    .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .btn-primary {
+        background-color: #007bff;
+        color: white;
+    }
+
+    .btn-success {
+        background-color: #28a745;
+        color: white;
+    }
+
+    .btn-secondary {
+        background-color: #6c757d;
+        color: white;
+    }
+</style>

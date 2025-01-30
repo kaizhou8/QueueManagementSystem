@@ -1,0 +1,206 @@
+@page "/display"
+@using QueueSystem.Shared.Models
+@using Microsoft.AspNetCore.SignalR.Client
+@inject NavigationManager NavigationManager
+@inject QueueService QueueService
+@implements IAsyncDisposable
+
+<PageTitle>Queue Display</PageTitle>
+
+<div class="display-container">
+    <div class="header">
+        <h1>Queue Status</h1>
+        <div class="time">@DateTime.Now.ToString("HH:mm:ss")</div>
+    </div>
+
+    <div class="current-calls">
+        <h2>Now Serving</h2>
+        <div class="calls-grid">
+            @foreach (var counter in _activeCounters)
+            {
+                <div class="call-item @(counter.Status == CounterStatus.Serving ? "active" : "")">
+                    <div class="counter-number">Counter @counter.Number</div>
+                    <div class="ticket-number">@counter.CurrentTicketNumber</div>
+                </div>
+            }
+        </div>
+    </div>
+
+    <div class="waiting-list">
+        <h2>Waiting List</h2>
+        <div class="waiting-grid">
+            @foreach (var ticket in _waitingTickets.Take(10))
+            {
+                <div class="waiting-item">
+                    <span class="ticket-number">@ticket.Number</span>
+                    <span class="wait-time">Est. Wait: @ticket.EstimatedWaitTime min</span>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private HubConnection? hubConnection;
+    private List<Counter> _activeCounters = new();
+    private List<QueueTicket> _waitingTickets = new();
+    private System.Threading.Timer? _timer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Initialize counters and tickets
+        _activeCounters = QueueService.GetCounters().ToList();
+        _waitingTickets = QueueService.GetActiveTickets().Where(t => t.Status == TicketStatus.Waiting).ToList();
+
+        // Set up SignalR connection
+        hubConnection = new HubConnectionBuilder()
+            .WithUrl(NavigationManager.ToAbsoluteUri("/queueHub"))
+            .WithAutomaticReconnect()
+            .Build();
+
+        // Handle new tickets
+        hubConnection.On<QueueTicket>("ReceiveNewTicket", (ticket) =>
+        {
+            _waitingTickets.Add(ticket);
+            StateHasChanged();
+        });
+
+        // Handle ticket calls
+        hubConnection.On<string, int>("ReceiveTicketCall", (ticketNumber, counterNumber) =>
+        {
+            var ticket = _waitingTickets.FirstOrDefault(t => t.Number == ticketNumber);
+            if (ticket != null)
+            {
+                _waitingTickets.Remove(ticket);
+            }
+            var counter = _activeCounters.FirstOrDefault(c => c.Number == counterNumber);
+            if (counter != null)
+            {
+                counter.CurrentTicketNumber = ticketNumber;
+                counter.Status = CounterStatus.Serving;
+            }
+            StateHasChanged();
+        });
+
+        // Handle counter updates
+        hubConnection.On<Counter>("ReceiveCounterUpdate", (counter) =>
+        {
+            var existingCounter = _activeCounters.FirstOrDefault(c => c.Number == counter.Number);
+            if (existingCounter != null)
+            {
+                var index = _activeCounters.IndexOf(existingCounter);
+                _activeCounters[index] = counter;
+            }
+            StateHasChanged();
+        });
+
+        await hubConnection.StartAsync();
+
+        // Set up timer for updating time display
+        _timer = new System.Threading.Timer(_ =>
+        {
+            InvokeAsync(StateHasChanged);
+        }, null, 0, 1000);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (hubConnection is not null)
+        {
+            await hubConnection.DisposeAsync();
+        }
+        
+        if (_timer is not null)
+        {
+            await _timer.DisposeAsync();
+        }
+    }
+}
+
+<style>
+    .display-container {
+        background-color: #1a1a1a;
+        color: white;
+        min-height: 100vh;
+        padding: 2rem;
+    }
+
+    .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 2rem;
+    }
+
+    .time {
+        font-size: 2rem;
+        font-weight: bold;
+    }
+
+    .calls-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 1rem;
+        margin-bottom: 2rem;
+    }
+
+    .call-item {
+        background-color: #333;
+        padding: 1.5rem;
+        border-radius: 8px;
+        text-align: center;
+    }
+
+    .call-item.active {
+        background-color: #006400;
+        animation: pulse 2s infinite;
+    }
+
+    .counter-number {
+        font-size: 1.5rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .ticket-number {
+        font-size: 2.5rem;
+        font-weight: bold;
+    }
+
+    .waiting-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 1rem;
+    }
+
+    .waiting-item {
+        background-color: #333;
+        padding: 1rem;
+        border-radius: 8px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .wait-time {
+        font-size: 0.9rem;
+        color: #aaa;
+        margin-top: 0.5rem;
+    }
+
+    @@keyframes pulse {
+        0% {
+            transform: scale(1);
+        }
+        50% {
+            transform: scale(1.05);
+        }
+        100% {
+            transform: scale(1);
+        }
+    }
+
+    h1, h2 {
+        color: #00ff00;
+        margin-bottom: 1rem;
+    }
+</style>

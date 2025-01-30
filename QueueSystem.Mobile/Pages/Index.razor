@@ -1,0 +1,243 @@
+@page "/"
+@using QueueSystem.Shared.Models
+@using Microsoft.AspNetCore.SignalR.Client
+@inject NavigationManager NavigationManager
+@inject HttpClient Http
+
+<div class="mobile-container">
+    @if (_myTicket == null)
+    {
+        <div class="service-selection">
+            <h2>Select Service</h2>
+            @if (_serviceTypes == null)
+            {
+                <p>Loading services...</p>
+            }
+            else
+            {
+                <div class="service-grid">
+                    @foreach (var service in _serviceTypes)
+                    {
+                        <div class="service-card" @onclick="() => GetTicket(service.Id)">
+                            <h3>@service.Name</h3>
+                            <p>@service.Description</p>
+                            <small>Average wait: @service.AverageProcessingTime min</small>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="ticket-info">
+            <div class="ticket-number">
+                <h1>@_myTicket.Number</h1>
+                <div class="status @_myTicket.Status.ToString().ToLower()">@_myTicket.Status</div>
+            </div>
+
+            <div class="wait-info">
+                <p>Estimated Wait Time: @_myTicket.EstimatedWaitTime minutes</p>
+                <p>Created: @_myTicket.CreatedTime.ToString("HH:mm")</p>
+            </div>
+
+            @if (_myTicket.Status == TicketStatus.Called)
+            {
+                <div class="called-info">
+                    <h2>Your turn!</h2>
+                    <p>Please proceed to Counter @_myTicket.CounterNumber</p>
+                </div>
+            }
+
+            <button class="btn-cancel" @onclick="CancelTicket">Cancel Ticket</button>
+        </div>
+    }
+</div>
+
+@code {
+    private HubConnection? hubConnection;
+    private QueueTicket? _myTicket;
+    private ServiceType[]? _serviceTypes;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _serviceTypes = await Http.GetFromJsonAsync<ServiceType[]>("api/services");
+        }
+        catch (Exception)
+        {
+            // Handle error
+        }
+
+        hubConnection = new HubConnectionBuilder()
+            .WithUrl(NavigationManager.ToAbsoluteUri("/queueHub"))
+            .WithAutomaticReconnect()
+            .Build();
+
+        hubConnection.On<string, TicketStatus>("ReceiveTicketUpdate", (ticketNumber, status) =>
+        {
+            if (_myTicket?.Number == ticketNumber)
+            {
+                _myTicket.Status = status;
+                StateHasChanged();
+            }
+        });
+
+        hubConnection.On<string, int>("ReceiveTicketCall", (ticketNumber, counterNumber) =>
+        {
+            if (_myTicket?.Number == ticketNumber)
+            {
+                _myTicket.Status = TicketStatus.Called;
+                _myTicket.CounterNumber = counterNumber;
+                StateHasChanged();
+            }
+        });
+
+        await hubConnection.StartAsync();
+    }
+
+    private async Task GetTicket(string serviceType)
+    {
+        try
+        {
+            _myTicket = await Http.GetFromJsonAsync<QueueTicket>($"api/queue/ticket/{serviceType}");
+            if (hubConnection != null)
+            {
+                await hubConnection.InvokeAsync("JoinServiceGroup", serviceType);
+            }
+        }
+        catch (Exception)
+        {
+            // Handle error
+        }
+    }
+
+    private async Task CancelTicket()
+    {
+        if (_myTicket != null)
+        {
+            try
+            {
+                await Http.PostAsync($"api/queue/cancel/{_myTicket.Number}", null);
+                _myTicket = null;
+            }
+            catch (Exception)
+            {
+                // Handle error
+            }
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (hubConnection is not null)
+        {
+            await hubConnection.DisposeAsync();
+        }
+    }
+}
+
+<style>
+    .mobile-container {
+        padding: 1rem;
+        max-width: 600px;
+        margin: 0 auto;
+    }
+
+    .service-grid {
+        display: grid;
+        gap: 1rem;
+        margin-top: 1rem;
+    }
+
+    .service-card {
+        background-color: white;
+        padding: 1.5rem;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        cursor: pointer;
+        transition: transform 0.2s;
+    }
+
+    .service-card:hover {
+        transform: translateY(-2px);
+    }
+
+    .ticket-info {
+        background-color: white;
+        padding: 2rem;
+        border-radius: 8px;
+        text-align: center;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .ticket-number {
+        margin-bottom: 2rem;
+    }
+
+    .ticket-number h1 {
+        font-size: 3rem;
+        margin: 0;
+        color: #007bff;
+    }
+
+    .status {
+        display: inline-block;
+        padding: 0.5rem 1rem;
+        border-radius: 20px;
+        font-weight: bold;
+        margin-top: 1rem;
+    }
+
+    .status.waiting {
+        background-color: #ffc107;
+        color: #000;
+    }
+
+    .status.called {
+        background-color: #28a745;
+        color: white;
+    }
+
+    .status.serving {
+        background-color: #17a2b8;
+        color: white;
+    }
+
+    .wait-info {
+        margin: 2rem 0;
+        color: #666;
+    }
+
+    .called-info {
+        background-color: #28a745;
+        color: white;
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 2rem 0;
+        animation: pulse 2s infinite;
+    }
+
+    .btn-cancel {
+        background-color: #dc3545;
+        color: white;
+        border: none;
+        padding: 0.75rem 1.5rem;
+        border-radius: 4px;
+        font-weight: bold;
+        cursor: pointer;
+    }
+
+    @keyframes pulse {
+        0% {
+            transform: scale(1);
+        }
+        50% {
+            transform: scale(1.05);
+        }
+        100% {
+            transform: scale(1);
+        }
+    }
+</style>
