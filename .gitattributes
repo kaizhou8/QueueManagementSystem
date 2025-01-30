@@ -1,0 +1,6 @@
+*.cs linguist-language=C#
+*.razor linguist-language=C#
+*.cshtml linguist-language=C#
+*.css linguist-vendored
+*.js linguist-vendored
+wwwroot/* linguist-vendored
